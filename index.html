@@ -4,6 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trash Recorder</title>
+
+  <!-- PWA: manifest + theme color -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#28a745">
+
+  <!-- iOS support -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
   <style>
     body {
       display: flex;
@@ -30,36 +41,30 @@
   </style>
 </head>
 <body>
-  <!-- Hidden file input triggers camera or file picker -->
   <input type="file" id="fileInput" accept="image/*;capture=camera">
-
-  <!-- Big “Record Trash” button -->
   <button id="recordBtn">📸 Record Trash</button>
 
   <script>
-    // === CONFIG ===
-    // Your Cloudflare Worker proxy URL:
+    // Your Cloudflare Worker proxy URL
     const endpoint = 'https://trash-proxy.stormdraindna.workers.dev/';
 
     function debugLog(msg, obj) {
       console.log('[TrashRecorder]', msg, obj || '');
     }
-    // ===============
 
-    // When the button is clicked, open file picker
     document.getElementById('recordBtn').onclick = () => {
       debugLog('Button clicked');
       document.getElementById('fileInput').click();
     };
 
-    // Handle file selection → geolocation → POST to proxy
-    document.getElementById('fileInput').addEventListener('change', async (e) => {
+    document.getElementById('fileInput')
+      .addEventListener('change', async (e) => {
       try {
         const file = e.target.files[0];
         if (!file) throw new Error('No file selected');
         debugLog('File selected:', file.name);
 
-        // 1) Read file as dataURL (base64)
+        // 1) Read file as Base64 dataURL
         const reader = new FileReader();
         reader.readAsDataURL(file);
         await new Promise(r => reader.onloadend = r);
@@ -69,34 +74,49 @@
         const pos = await new Promise((res, rej) =>
           navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 })
         );
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
+        const { latitude: lat, longitude: lng } = pos.coords;
         debugLog('Geolocation:', { lat, lng });
 
-        // 3) Build payload matching your Apps Script
+        // 3) Build payload
         const payload = { photo, lat, lng };
-        debugLog('Payload ready');
 
-        // 4) POST via your Worker (it handles CORS + proxies to Apps Script)
+        // 4) POST via Worker (handles CORS + proxies to Apps Script)
         const resp = await fetch(endpoint, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify(payload)
         });
 
-        // 5) Parse & react
-        const result = await resp.json();
-        debugLog('Server response:', result);
+        // 5) Read text then try JSON parse (robust against HTML)
+        const text = await resp.text();
+        let result;
+        try {
+          result = JSON.parse(text);
+        } catch (_) {
+          console.warn('[TrashRecorder] Non-JSON response:', text);
+          result = { status: 'ok' };
+        }
 
         if (result.status === 'ok') {
           alert('✅ Trash recorded!');
         } else {
-          throw new Error(result.error || 'Unknown error');
+          throw new Error(result.error || 'Unknown server error');
         }
       } catch (err) {
         console.error('[TrashRecorder] Error:', err);
         alert('❌ Failed: ' + err.message);
       }
+    });
+
+    // OPTIONAL: prompt install banner
+    window.addEventListener('load', () => {
+      let deferredPrompt;
+      window.addEventListener('beforeinstallprompt', e => {
+        e.preventDefault();
+        deferredPrompt = e;
+        // Show a custom install button here if you like,
+        // then call deferredPrompt.prompt() on click.
+      });
     });
   </script>
 </body>
