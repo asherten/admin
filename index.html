@@ -4,122 +4,103 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trash Recorder</title>
-
-  <!-- PWA manifest & theme color -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#28a745">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="icon-192.png">
-
   <style>
-    body {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-      background: #f0f0f0;
-      font-family: sans-serif;
-    }
-    #recordBtn {
-      font-size: 2rem;
-      padding: 1rem 2rem;
-      border: none;
-      border-radius: 8px;
-      background: #28a745;
-      color: #fff;
-      cursor: pointer;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    }
-    #fileInput {
-      display: none;
-    }
+    body { display:flex; justify-content:center; align-items:center;
+           height:100vh; margin:0; background:#f0f0f0; font-family:sans-serif; }
+    #recordBtn { font-size:2rem; padding:1rem 2rem; border:none;
+                 border-radius:8px; background:#28a745; color:#fff;
+                 cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.2); }
+    #fileInput { display:none; }
   </style>
 </head>
 <body>
-  <!-- Hidden file input: opens camera or file picker -->
-  <input
-    type="file"
-    id="fileInput"
-    accept="image/*"
-    capture="environment"
-  >
+  <input type="file" id="fileInput" accept="image/*" capture="environment">
   <button id="recordBtn">📸 Record Trash</button>
 
   <script>
     const endpoint = 'https://trash-proxy.stormdraindna.workers.dev/';
 
-    function debugLog(msg, obj) {
-      console.log('[TrashRecorder]', msg, obj || '');
+    function debugLog(msg, obj) { console.log('[TrashRecorder]', msg, obj||''); }
+
+    // Resize & compress image to max 1024px & 70% JPEG
+    async function shrinkAndCompress(dataUrl) {
+      return new Promise(resolve => {
+        const img = new Image();
+        img.src = dataUrl;
+        img.onload = () => {
+          const maxDim = 1024;
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            const scale = maxDim / Math.max(width, height);
+            width  = width * scale;
+            height = height * scale;
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          // JPEG @ 0.7 quality
+          const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          resolve(jpegDataUrl);
+        };
+        img.onerror = () => resolve(dataUrl); // fallback
+      });
     }
 
-    document.getElementById('recordBtn').onclick = () => {
-      debugLog('Button clicked');
+    document.getElementById('recordBtn').onclick = () =>
       document.getElementById('fileInput').click();
-    };
 
-    document.getElementById('fileInput').addEventListener('change', async (e) => {
+    document.getElementById('fileInput')
+      .addEventListener('change', async e => {
       try {
         const file = e.target.files[0];
         if (!file) throw new Error('No file selected');
-        debugLog('Original file type:', file.type, 'size:', file.size);
+        debugLog('Original file:', file.type, file.size);
 
-        // 1) Read as dataURL
+        // Read as DataURL
         const reader = new FileReader();
         reader.readAsDataURL(file);
         await new Promise(r => reader.onloadend = r);
-        let dataUrl = reader.result;
+        let photoDataUrl = reader.result;
 
-        // 2) If not PNG, convert via canvas
-        if (!dataUrl.startsWith('data:image/png')) {
-          debugLog('Converting to PNG…');
-          const img = new Image();
-          img.src = dataUrl;
-          await new Promise(r => img.onload = r);
-          const canvas = document.createElement('canvas');
-          canvas.width  = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0);
-          dataUrl = canvas.toDataURL('image/png');
-          debugLog('Conversion done, new size:', dataUrl.length);
-        }
+        // Shrink & compress
+        photoDataUrl = await shrinkAndCompress(photoDataUrl);
+        debugLog('After compression, size:', photoDataUrl.length);
 
-        // 3) Get geolocation (with 10s timeout)
+        // Geolocation
         const pos = await new Promise((res, rej) =>
-          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 })
+          navigator.geolocation.getCurrentPosition(res, rej, { timeout:10000 })
         );
         const { latitude: lat, longitude: lng } = pos.coords;
-        debugLog('Geolocation:', { lat, lng });
 
-        // 4) Send via your Worker
-        const payload = { photo: dataUrl, lat, lng };
+        // Send
         const resp = await fetch(endpoint, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify(payload)
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({ photo: photoDataUrl, lat, lng })
         });
 
-        // 5) Read text & try JSON parse
+        // Robust parse
         const text = await resp.text();
         let result;
-        try {
-          result = JSON.parse(text);
-        } catch (_) {
-          console.warn('[TrashRecorder] Non-JSON response:', text);
-          result = { status: 'ok' };
-        }
+        try { result = JSON.parse(text); }
+        catch { result = { status:'ok' }; }
 
         if (result.status === 'ok') {
           alert('✅ Trash recorded!');
         } else {
-          throw new Error(result.error || 'Server error');
+          throw new Error(result.error||'Server error');
         }
       } catch (err) {
         console.error('[TrashRecorder] Error:', err);
-        alert('❌ Failed: ' + err.message);
+        alert('❌ Failed: '+err.message);
       }
     });
   </script>
