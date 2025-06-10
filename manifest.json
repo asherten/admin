@@ -1,7 +1,7 @@
 {
   "name": "Trash Recorder",
   "short_name": "TrashRec",
-  "start_url": "/index.html",
+  "start_url": "/admin",
   "display": "standalone",
   "background_color": "#f0f0f0",
   "theme_color": "#28a745",
