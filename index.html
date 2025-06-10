@@ -2,102 +2,62 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Record Trash</title>
-
-  <!-- Fullscreen on iOS -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trash Recorder</title>
   <style>
     body {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-      font-family: sans-serif;
-      background: #eef;
+      display: flex; justify-content: center; align-items: center;
+      height: 100vh; margin: 0; background: #f0f0f0;
     }
-    button {
-      font-size: 1.5em;
-      padding: 1em 2em;
-      border: none;
-      border-radius: 8px;
-      background: #1888d4;
-      color: #fff;
+    #recordBtn {
+      font-size: 2rem; padding: 1rem 2rem; border: none;
+      border-radius: 8px; background: #28a745; color: #fff;
+      cursor: pointer;
     }
   </style>
 </head>
 <body>
-  <button id="record">📸 Record Trash</button>
-
+  <button id="recordBtn">📸Record Trash</button>
   <script>
-    (async () => {
-      const btn = document.getElementById('record');
-      const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxch7BbX24RuBAATZAVFTn0c-QBvGcndzYlgEc8pIC50DXHEM3nSCj57tYA1uEj5BmO/exec';
-      const GEO_KEY     = 'AIzaSyBamWX5V1dfFpJAXxqrznLfzbzw_nYuW9U';
+    const webAppUrl = 'https://script.google.com/macros/s/AKfycbzv2aAFV2Sga-Xh2NmBliDDfBOIAYfE0j_jj-8Zf5ykoQq1vIrMJ9lqIU-IwFPrQTQF0A/exec'; // replace with your deployment URL
 
-      btn.onclick = async () => {
-        // 1) Location
-        if (!navigator.geolocation) return alert('No geolocation.');
-        let pos;
-        try {
-          pos = await new Promise((r, x) =>
-            navigator.geolocation.getCurrentPosition(r, x, { enableHighAccuracy: true })
-          );
-        } catch (e) {
-          return alert('Location denied.');
-        }
-        const { latitude: lat, longitude: lng } = pos.coords;
+    document.getElementById('recordBtn').onclick = async () => {
+      try {
+        // 1. Capture photo
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const track = stream.getVideoTracks()[0];
+        const imageCapture = new ImageCapture(track);
+        const blob = await imageCapture.takePhoto();
+        track.stop();
 
-        // 2) Reverse geocode
-        let resp = await fetch(
-          `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GEO_KEY}`
+        // Convert to Base64
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        await new Promise(r => reader.onloadend = r);
+        const imageBase64 = reader.result;
+
+        // 2. Get geolocation
+        const pos = await new Promise((res, rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej)
         );
-        let jd = await resp.json();
-        if (jd.status !== 'OK' || !jd.results.length) {
-          return alert('Address lookup failed.');
-        }
-        const address = jd.results[0].formatted_address;
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
 
-        // 3) Photo
-        const inp = document.createElement('input');
-        inp.type = 'file';
-        inp.accept = 'image/*';
-        inp.capture = 'environment';
-        inp.onchange = () => {
-          const file = inp.files[0];
-          const reader = new FileReader();
-          reader.onload = async () => {
-            const imageData = reader.result; // data:image/...;base64,...
+        // 3. POST to Apps Script
+        const payload = { imageBase64, imageType: blob.type, lat, lng };
+        const resp = await fetch(webAppUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const result = await resp.json();
 
-            // 4) POST
-            const payload = { action:'trash', lat, lng, address, imageData };
-            console.log('→', payload);
-            try {
-              let r2 = await fetch(WEB_APP_URL, {
-                method: 'POST',
-                headers: { 'Content-Type':'application/json' },
-                body: JSON.stringify(payload)
-              });
-              let j = await r2.json();
-              console.log('←', j);
-              if (j.result === 'success') {
-                alert('✅ Recorded!');
-              } else {
-                alert('❌ ' + j.message);
-              }
-            } catch (err) {
-              console.error(err);
-              alert('Network error.');
-            }
-          };
-          reader.readAsDataURL(file);
-        };
-        inp.click();
-      };
-    })();
+        if (result.status === 'ok') alert('Saved!');
+        else alert('Error: ' + result.message);
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    };
   </script>
 </body>
 </html>
