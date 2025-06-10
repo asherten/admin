@@ -39,17 +39,12 @@
   </style>
 </head>
 <body>
-  <!-- 
-    capture="environment" hints: open back‐facing camera 
-    accept="image/*" allows all image types 
-  -->
   <input
     type="file"
     id="fileInput"
     accept="image/*"
     capture="environment"
   >
-
   <button id="recordBtn">📸 Record Trash</button>
 
   <script>
@@ -65,49 +60,63 @@
     };
 
     document.getElementById('fileInput')
-      .addEventListener('change', async (e) => {
+      .addEventListener('change', async e => {
       try {
         const file = e.target.files[0];
         if (!file) throw new Error('No file selected');
-        debugLog('File selected:', file.name);
+        debugLog('Original file type:', file.type, 'size:', file.size);
 
-        // 1) Read as Base64 dataURL
+        // 1) Read as DataURL
         const reader = new FileReader();
         reader.readAsDataURL(file);
         await new Promise(r => reader.onloadend = r);
-        const photo = reader.result;
+        let dataUrl = reader.result;
 
-        // 2) Acquire geolocation (10s timeout)
+        // 2) Convert to PNG if needed
+        if (!dataUrl.startsWith('data:image/png')) {
+          debugLog('Converting to PNG...');
+          const img = new Image();
+          img.src = dataUrl;
+          await new Promise(r => img.onload = r);
+
+          const canvas = document.createElement('canvas');
+          canvas.width  = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          dataUrl = canvas.toDataURL('image/png');
+          debugLog('Conversion done, new size:', dataUrl.length);
+        }
+
+        // 3) Acquire geolocation (10s timeout)
         const pos = await new Promise((res, rej) =>
           navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 })
         );
         const { latitude: lat, longitude: lng } = pos.coords;
         debugLog('Geolocation:', { lat, lng });
 
-        // 3) Build payload
-        const payload = { photo, lat, lng };
-
-        // 4) POST via Worker
+        // 4) Build & send payload
+        const payload = { photo: dataUrl, lat, lng };
         const resp = await fetch(endpoint, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify(payload)
         });
 
-        // 5) Read text & try JSON parse
+        // 5) Handle response
         const text = await resp.text();
         let result;
         try {
           result = JSON.parse(text);
         } catch (_) {
-          console.warn('[TrashRecorder] Non-JSON response:', text);
+          debugLog('Non-JSON response, assuming success');
           result = { status: 'ok' };
         }
 
         if (result.status === 'ok') {
           alert('✅ Trash recorded!');
         } else {
-          throw new Error(result.error || 'Unknown server error');
+          throw new Error(result.error || 'Server error');
         }
       } catch (err) {
         console.error('[TrashRecorder] Error:', err);
