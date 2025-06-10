@@ -22,57 +22,63 @@
 <body>
   <input type="file" id="fileInput" accept="image/*;capture=camera">
   <button id="recordBtn">📸Record Trash</button>
-  <script>
-    const webAppUrl = 'https://script.google.com/macros/s/AKfycbzv2aAFV2Sga-Xh2NmBliDDfBOIAYfE0j_jj-8Zf5ykoQq1vIrMJ9lqIU-IwFPrQTQF0A/exec'; // replace with your deployment URL
+<script>
+  const webAppUrl = 'https://script.google.com/macros/s/AKfycbw3Q6QYy2HrKCjTzInHkHiii7YkIShi7XYkDolk_hi3RgR6jA2viPbFgrvdR83cwx0JDA/exec';
 
-    function debugLog(msg, obj) {
-      console.log('[TrashRecorder]', msg, obj || '');
-    }
+  function debugLog(msg, obj) {
+    console.log('[TrashRecorder]', msg, obj || '');
+  }
 
-    document.getElementById('recordBtn').onclick = () => {
-      debugLog('Button clicked, triggering file input');
-      document.getElementById('fileInput').click();
-    };
+  document.getElementById('recordBtn').onclick = () => {
+    debugLog('Button clicked, triggering file input');
+    document.getElementById('fileInput').click();
+  };
 
-    document.getElementById('fileInput').addEventListener('change', async (e) => {
-      try {
-        const file = e.target.files[0];
-        if (!file) throw new Error('No file selected');
-        debugLog('File selected:', file.name);
+  document.getElementById('fileInput').addEventListener('change', async (e) => {
+    try {
+      const file = e.target.files[0];
+      if (!file) throw new Error('No file selected');
+      debugLog('File selected:', file.name);
 
-        // Read as Base64
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        await new Promise(r => reader.onloadend = r);
-        const imageBase64 = reader.result;
+      // Read as Base64 dataURL
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      await new Promise(r => reader.onloadend = r);
+      const imageBase64 = reader.result;
 
-        // 2. Get geolocation with timeout
-        const pos = await new Promise((res, rej) => {
-          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 });
-        });
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        debugLog('Geolocation success:', { lat, lng });
+      // Get geolocation with 10s timeout
+      const pos = await new Promise((res, rej) =>
+        navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 })
+      );
+      debugLog('Geolocation success:', pos.coords);
 
-        // 3. POST to Apps Script
-        const payload = { imageBase64, imageType: file.type, lat, lng };
-        debugLog('Sending payload');
-        const resp = await fetch(webAppUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const result = await resp.json();
-        debugLog('Server response:', result);
+      // Build payload matching Apps Script
+      const payload = {
+        photo: imageBase64,
+        lat:   pos.coords.latitude,
+        lng:   pos.coords.longitude
+      };
+      debugLog('Sending payload', payload);
 
-        if (result.status === 'ok') alert('Saved!');
-        else alert('Error: ' + result.message);
+      // POST to your web app
+      const resp = await fetch(webAppUrl, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload)
+      });
+      const result = await resp.json();
+      debugLog('Server response:', result);
 
-      } catch (e) {
-        console.error('[TrashRecorder] Error:', e);
-        alert('Failed: ' + e.message);
+      if (result.status === 'ok') {
+        alert('✅ Saved!');
+      } else {
+        throw new Error(result.error || 'Unknown server error');
       }
-    });
-  </script>
+    } catch (err) {
+      console.error('[TrashRecorder] Error:', err);
+      alert('❌ Failed: ' + err.message);
+    }
+  });
+</script>
 </body>
 </html>
