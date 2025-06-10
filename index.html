@@ -14,50 +14,65 @@
       border-radius: 8px; background: #28a745; color: #fff;
       cursor: pointer;
     }
+    #fileInput {
+      display: none;
+    }
   </style>
 </head>
 <body>
+  <input type="file" id="fileInput" accept="image/*;capture=camera">
   <button id="recordBtn">📸Record Trash</button>
   <script>
     const webAppUrl = 'https://script.google.com/macros/s/AKfycbzv2aAFV2Sga-Xh2NmBliDDfBOIAYfE0j_jj-8Zf5ykoQq1vIrMJ9lqIU-IwFPrQTQF0A/exec'; // replace with your deployment URL
 
-    document.getElementById('recordBtn').onclick = async () => {
-      try {
-        // 1. Capture photo
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        const track = stream.getVideoTracks()[0];
-        const imageCapture = new ImageCapture(track);
-        const blob = await imageCapture.takePhoto();
-        track.stop();
+    function debugLog(msg, obj) {
+      console.log('[TrashRecorder]', msg, obj || '');
+    }
 
-        // Convert to Base64
+    document.getElementById('recordBtn').onclick = () => {
+      debugLog('Button clicked, triggering file input');
+      document.getElementById('fileInput').click();
+    };
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      try {
+        const file = e.target.files[0];
+        if (!file) throw new Error('No file selected');
+        debugLog('File selected:', file.name);
+
+        // Read as Base64
         const reader = new FileReader();
-        reader.readAsDataURL(blob);
+        reader.readAsDataURL(file);
         await new Promise(r => reader.onloadend = r);
         const imageBase64 = reader.result;
 
-        // 2. Get geolocation
-        const pos = await new Promise((res, rej) =>
-          navigator.geolocation.getCurrentPosition(res, rej)
-        );
+        // 2. Get geolocation with timeout
+        const pos = await new Promise((res, rej) => {
+          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 });
+        });
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
+        debugLog('Geolocation success:', { lat, lng });
 
         // 3. POST to Apps Script
-        const payload = { imageBase64, imageType: blob.type, lat, lng };
+        const payload = { imageBase64, imageType: file.type, lat, lng };
+        debugLog('Sending payload');
         const resp = await fetch(webAppUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
         const result = await resp.json();
+        debugLog('Server response:', result);
 
         if (result.status === 'ok') alert('Saved!');
         else alert('Error: ' + result.message);
+
       } catch (e) {
+        console.error('[TrashRecorder] Error:', e);
         alert('Failed: ' + e.message);
       }
-    };
+    });
   </script>
 </body>
 </html>
