@@ -2,17 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trash Recorder</title>
   <style>
     body {
-      display: flex; justify-content: center; align-items: center;
-      height: 100vh; margin: 0; background: #f0f0f0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background: #f0f0f0;
+      font-family: sans-serif;
     }
     #recordBtn {
-      font-size: 2rem; padding: 1rem 2rem; border: none;
-      border-radius: 8px; background: #28a745; color: #fff;
+      font-size: 2rem;
+      padding: 1rem 2rem;
+      border: none;
+      border-radius: 8px;
+      background: #28a745;
+      color: #fff;
       cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
     #fileInput {
       display: none;
@@ -20,65 +30,74 @@
   </style>
 </head>
 <body>
+  <!-- Hidden file input triggers camera or file picker -->
   <input type="file" id="fileInput" accept="image/*;capture=camera">
-  <button id="recordBtn">📸Record Trash</button>
-<script>
-  const webAppUrl = 'https://script.google.com/macros/s/AKfycbw3Q6QYy2HrKCjTzInHkHiii7YkIShi7XYkDolk_hi3RgR6jA2viPbFgrvdR83cwx0JDA/exec';
 
-  function debugLog(msg, obj) {
-    console.log('[TrashRecorder]', msg, obj || '');
-  }
+  <!-- Big “Record Trash” button -->
+  <button id="recordBtn">📸 Record Trash</button>
 
-  document.getElementById('recordBtn').onclick = () => {
-    debugLog('Button clicked, triggering file input');
-    document.getElementById('fileInput').click();
-  };
+  <script>
+    // === CONFIG ===
+    // Your Cloudflare Worker proxy URL:
+    const endpoint = 'https://trash-proxy.stormdraindna.workers.dev/';
 
-  document.getElementById('fileInput').addEventListener('change', async (e) => {
-    try {
-      const file = e.target.files[0];
-      if (!file) throw new Error('No file selected');
-      debugLog('File selected:', file.name);
-
-      // Read as Base64 dataURL
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      await new Promise(r => reader.onloadend = r);
-      const imageBase64 = reader.result;
-
-      // Get geolocation with 10s timeout
-      const pos = await new Promise((res, rej) =>
-        navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 })
-      );
-      debugLog('Geolocation success:', pos.coords);
-
-      // Build payload matching Apps Script
-      const payload = {
-        photo: imageBase64,
-        lat:   pos.coords.latitude,
-        lng:   pos.coords.longitude
-      };
-      debugLog('Sending payload', payload);
-
-      // POST to your web app
-      const resp = await fetch(webAppUrl, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload)
-      });
-      const result = await resp.json();
-      debugLog('Server response:', result);
-
-      if (result.status === 'ok') {
-        alert('✅ Saved!');
-      } else {
-        throw new Error(result.error || 'Unknown server error');
-      }
-    } catch (err) {
-      console.error('[TrashRecorder] Error:', err);
-      alert('❌ Failed: ' + err.message);
+    function debugLog(msg, obj) {
+      console.log('[TrashRecorder]', msg, obj || '');
     }
-  });
-</script>
+    // ===============
+
+    // When the button is clicked, open file picker
+    document.getElementById('recordBtn').onclick = () => {
+      debugLog('Button clicked');
+      document.getElementById('fileInput').click();
+    };
+
+    // Handle file selection → geolocation → POST to proxy
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      try {
+        const file = e.target.files[0];
+        if (!file) throw new Error('No file selected');
+        debugLog('File selected:', file.name);
+
+        // 1) Read file as dataURL (base64)
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        await new Promise(r => reader.onloadend = r);
+        const photo = reader.result;
+
+        // 2) Acquire geolocation (10s timeout)
+        const pos = await new Promise((res, rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 })
+        );
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        debugLog('Geolocation:', { lat, lng });
+
+        // 3) Build payload matching your Apps Script
+        const payload = { photo, lat, lng };
+        debugLog('Payload ready');
+
+        // 4) POST via your Worker (it handles CORS + proxies to Apps Script)
+        const resp = await fetch(endpoint, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(payload)
+        });
+
+        // 5) Parse & react
+        const result = await resp.json();
+        debugLog('Server response:', result);
+
+        if (result.status === 'ok') {
+          alert('✅ Trash recorded!');
+        } else {
+          throw new Error(result.error || 'Unknown error');
+        }
+      } catch (err) {
+        console.error('[TrashRecorder] Error:', err);
+        alert('❌ Failed: ' + err.message);
+      }
+    });
+  </script>
 </body>
 </html>
