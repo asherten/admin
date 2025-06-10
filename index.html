@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Record Trash</title>
+
+  <!-- PWA manifest + iOS full-screen -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <style>
+    body { display:flex; align-items:center; justify-content:center; height:100vh; margin:0; font-family:sans-serif; background:#eef; }
+    button { font-size:1.5em; padding:1em 2em; border:none; border-radius:8px; background:#1888d4; color:#fff; }
+  </style>
+</head>
+<body>
+  <button id="record">📸 Record Trash</button>
+
+  <script>
+  (async ()=> {
+    const btn = document.getElementById('record');
+    const webAppUrl = 'https://script.google.com/macros/s/AKfycbxV8EVZeD8wIZvdu0oW7nMhzK7BTP5C8W9kMCBbfxLwcUanwFjpkeXFCDoroXX12q3f/exec'; // ← replace with your Apps Script URL
+
+    btn.onclick = async () => {
+      // 1) get geo
+      if (!navigator.geolocation) return alert('Geolocation not supported.');
+      let pos;
+      try {
+        pos = await new Promise((res,rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy:true })
+        );
+      } catch (e) {
+        return alert('Location permission denied.');
+      }
+      const { latitude: lat, longitude: lng } = pos.coords;
+
+      // 2) reverse-geocode to street address
+      //    ▶️ You need a Google Maps Geocoding API key for this.
+      const API_KEY = 'AIzaSyBamWX5V1dfFpJAXxqrznLfzbzw_nYuW9U';
+      const geoRes = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${API_KEY}`
+      );
+      const geoData = await geoRes.json();
+      if (geoData.status!=='OK' || !geoData.results.length) {
+        return alert('Could not look up address.');
+      }
+      const address = geoData.results[0].formatted_address;
+
+      // 3) take photo
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.capture = 'environment';
+      input.onchange = async () => {
+        const file = input.files[0];
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const imageData = reader.result; // data:image/...;base64,...
+
+          // 4) POST to Apps Script
+          const payload = {
+            action: 'trash',
+            lat, lng,
+            address,
+            imageData
+          };
+          const resp = await fetch(webAppUrl, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: {'Content-Type':'application/json'}
+          });
+          const j = await resp.json();
+          if (j.result==='success') {
+            alert('Trash recorded! 👍');
+          } else {
+            alert('Error: '+j.message);
+          }
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    };
+  })();
+  </script>
+</body>
+</html>
