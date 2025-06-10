@@ -5,28 +5,29 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Record Trash</title>
 
-  <!-- PWA manifest + iOS full-screen -->
-  <link rel="manifest" href="manifest.json">
+  <!-- Standalone on iOS -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- Manifest (optional) -->
+  <link rel="manifest" href="manifest.json">
 
   <style>
     body {
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      height:100vh;
-      margin:0;
-      font-family:sans-serif;
-      background:#eef;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      font-family: sans-serif;
+      background: #eef;
     }
     button {
-      font-size:1.5em;
-      padding:1em 2em;
-      border:none;
-      border-radius:8px;
-      background:#1888d4;
-      color:#fff;
+      font-size: 1.5em;
+      padding: 1em 2em;
+      border: none;
+      border-radius: 8px;
+      background: #1888d4;
+      color: #fff;
     }
   </style>
 </head>
@@ -34,71 +35,66 @@
   <button id="record">📸 Record Trash</button>
 
   <script>
-    (async () => {
-      const btn = document.getElementById('record');
-      const webAppUrl = 'https://script.google.com/macros/s/AKfycbx4W4_yAn29azMfPvnFO622wdphVYlaEy2xkRQBagrqf514fc03DE0sDhTYFKv5_Dw5/exec';
-      const GEOCODE_KEY = 'AIzaSyBamWX5V1dfFpJAXxqrznLfzbzw_nYuW9U';
+  (async () => {
+    const btn = document.getElementById('record');
+    const webAppUrl = 'https://script.google.com/macros/s/AKfycbx4W4_yAn29azMfPvnFO622wdphVYlaEy2xkRQBagrqf514fc03DE0sDhTYFKv5_Dw5/exec';
+    const GEOCODE_KEY = 'AIzaSyBamWX5V1dfFpJAXxqrznLfzbzw_nYuW9U';
 
-      btn.onclick = async () => {
-        // 1) Get location
-        if (!navigator.geolocation) {
-          return alert('Geolocation not supported.');
-        }
-        let pos;
-        try {
-          pos = await new Promise((res, rej) =>
-            navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true })
-          );
-        } catch (e) {
-          return alert('Location permission denied.');
-        }
-        const { latitude: lat, longitude: lng } = pos.coords;
-
-        // 2) Reverse-geocode to street address
-        let geoRes = await fetch(
-          `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GEOCODE_KEY}`
+    btn.onclick = async () => {
+      // 1) Get location
+      if (!navigator.geolocation) {
+        return alert('Geolocation not supported.');
+      }
+      let pos;
+      try {
+        pos = await new Promise((res, rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true })
         );
-        let geoData = await geoRes.json();
-        if (geoData.status !== 'OK' || !geoData.results.length) {
-          return alert('Could not look up address.');
-        }
-        const address = geoData.results[0].formatted_address;
+      } catch (e) {
+        return alert('Location permission denied.');
+      }
+      const { latitude: lat, longitude: lng } = pos.coords;
 
-        // 3) Take photo
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.capture = 'environment';
-        input.onchange = async () => {
-          const file = input.files[0];
-          const reader = new FileReader();
-          reader.onload = async () => {
-            const imageData = reader.result; // data:image/...;base64,...
+      // 2) Reverse-geocode
+      let geo = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GEOCODE_KEY}`);
+      let data = await geo.json();
+      if (data.status !== 'OK' || !data.results.length) {
+        return alert('Could not look up address.');
+      }
+      const address = data.results[0].formatted_address;
 
-            // 4) POST to Apps Script
-            const payload = {
-              action: 'trash',
-              lat, lng,
-              address,
-              imageData
-            };
-            let resp = await fetch(webAppUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
-            let j = await resp.json();
-            if (j.result === 'success') {
-              alert('Trash recorded! 👍');
-            } else {
-              alert('Error: ' + j.message);
-            }
-          };
-          reader.readAsDataURL(file);
+      // 3) Take photo
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.capture = 'environment';
+      input.onchange = async () => {
+        const file = input.files[0];
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const imageData = reader.result; // base64
+
+          // 4) Send to Apps Script
+          const payload = { action: 'trash', lat, lng, address, imageData };
+          console.log('Sending:', payload);
+          let r = await fetch(webAppUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          let j = await r.json();
+          console.log('Response:', j);
+          if (j.result === 'success') {
+            alert('✅ Trash recorded!');
+          } else {
+            alert('❌ ' + j.message);
+          }
         };
-        input.click();
+        reader.readAsDataURL(file);
       };
-    })();
+      input.click();
+    };
+  })();
   </script>
 </body>
 </html>
