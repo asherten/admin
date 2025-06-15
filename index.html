@@ -1,125 +1,128 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trash Recorder</title>
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#28a745">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="apple-touch-icon" href="icon-192.png">
-  <style>
-    body { display:flex; justify-content:center; align-items:center;
-           height:100vh; margin:0; background:#f0f0f0; font-family:sans-serif; }
-    #recordBtn { font-size:2rem; padding:1rem 2rem; border:none;
-                 border-radius:8px; background:#28a745; color:#fff;
-                 cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.2); }
-    #fileInput { display:none; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trash Recorder</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color"                        content="#28a745">
+<meta name="mobile-web-app-capable"             content="yes">
+<meta name="apple-mobile-web-app-capable"       content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<style>
+  body { display:flex; justify-content:center; align-items:center;
+         height:100vh; margin:0; background:#f0f0f0; font-family:sans-serif; }
+  #recordBtn { font-size:2rem; padding:1rem 2rem; border:none;
+               border-radius:8px; background:#28a745; color:#fff;
+               cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,.2); }
+  #fileInput { display:none; }
+</style>
 </head>
 <body>
-  <input type="file" id="fileInput" accept="image/*" capture="environment">
-  <button id="recordBtn">📸 Record Trash</button>
+  <input  type="file" id="fileInput" accept="image/*" capture="environment">
+  <button type="button" id="recordBtn">📸 Record Trash</button>
 
 <script>
-/* ------------------- CONFIG ------------------- */
-const endpoint    = 'https://trash-proxy.stormdraindna.workers.dev/';
-const MAX_RETRIES = 3;            // per record
-/* ---------------------------------------------- */
+/* ---------------- CONFIG ---------------- */
+const ENDPOINT    = 'https://trash-proxy.stormdraindna.workers.dev/';
+const MAX_RETRIES = 3;
+/* ---------------------------------------- */
 
-const fileInput = document.getElementById('fileInput');
-const recordBtn = document.getElementById('recordBtn');
+/* ---------- helper: offline queue -------- */
+const loadQueue  = () => JSON.parse(localStorage.queue || '[]');
+const saveQueue  = q  => localStorage.queue = JSON.stringify(q);
+const enqueue    = j  => { const q = loadQueue(); q.push(j); saveQueue(q); };
+const dequeue    = () => { const q = loadQueue(); const j=q.shift(); saveQueue(q); return j; };
 
-/* -------- Small offline queue using localStorage -------- */
-function loadQueue()      { return JSON.parse(localStorage.queue || '[]'); }
-function saveQueue(q)     { localStorage.queue = JSON.stringify(q); }
-function enqueue(job)     { const q = loadQueue(); q.push(job); saveQueue(q); }
-function dequeue()        { const q = loadQueue(); const j = q.shift(); saveQueue(q); return j; }
-async function flushQueue(){
+async function flushQueue () {
   while (loadQueue().length) {
     const job = dequeue();
-    const ok  = await trySend(job);
-    if (!ok) { enqueue(job); break; }   // stop if still offline
+    if (!(await trySend(job))) { enqueue(job); break; }
   }
 }
 
-/* ------------- Utility: shrink & compress ------------- */
-async function shrinkAndCompress(dataUrl) {
-  return new Promise(resolve => {
+/* ---------- helper: shrink & compress ---- */
+function shrinkAndCompress(dataUrl) {
+  return new Promise(res => {
     const img = new Image();
-    img.src = dataUrl;
     img.onload = () => {
-      let {width,w:W, height:h:H} = img;
-      const max = 1024;
-      if (width > max || height > max) {
-        const s = max / Math.max(width,height);
-        width *= s; height *= s;
+      let {width, height} = img;
+      const MAX = 1024;
+      if (width > MAX || height > MAX) {
+        const scale = MAX / Math.max(width, height);
+        width  = Math.round(width  * scale);
+        height = Math.round(height * scale);
       }
-      const c = document.createElement('canvas');
-      c.width = width; c.height = height;
-      c.getContext('2d').drawImage(img, 0, 0, width, height);
-      resolve(c.toDataURL('image/jpeg', 0.7));
+      const canvas = document.createElement('canvas');
+      canvas.width  = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      res(canvas.toDataURL('image/jpeg', 0.7));
     };
-    img.onerror = () => resolve(dataUrl);
+    img.onerror = () => res(dataUrl);
+    img.src = dataUrl;
   });
 }
 
-/* ------------- Send with retry logic ------------------ */
-async function trySend(payload){
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++){
+/* ---------- helper: send with retries ---- */
+async function trySend(payload) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const r  = await fetch(endpoint, {
+      const r  = await fetch(ENDPOINT, {
         method: 'POST',
         headers:{'Content-Type':'application/json'},
         body:   JSON.stringify(payload)
       });
-      const t  = await r.text();
-      const js = JSON.parse(t || '{}');
+      const js = await r.json().catch(() => ({}));
       if (js.status === 'ok') return true;
-      throw new Error(js.error || 'Server error');
-    } catch (e){
+      throw new Error(js.error || 'server');
+    } catch (_) {
       if (attempt === MAX_RETRIES) return false;
-      await new Promise(res => setTimeout(res, 600 * attempt));
+      await new Promise(s => setTimeout(s, 600 * attempt));
     }
   }
 }
 
-/* ------------- Event handlers ------------------------- */
-recordBtn.onclick = () => fileInput.click();
+/* ---------- DOM-ready bindings ---------- */
+document.addEventListener('DOMContentLoaded', () => {
+  const fileInput = document.getElementById('fileInput');
+  const recordBtn = document.getElementById('recordBtn');
 
-fileInput.addEventListener('change', async e => {
-  try {
-    const file = e.target.files[0];
-    if (!file) return;
+  recordBtn.addEventListener('click', () => fileInput.click());
 
-    // 1. Read + compress image
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    await new Promise(r => reader.onloadend = r);
-    const photo = await shrinkAndCompress(reader.result);
+  fileInput.addEventListener('change', async e => {
+    try {
+      const file = e.target.files[0];
+      if (!file) return;
 
-    // 2. Geolocation
-    const pos = await new Promise((res, rej) =>
-                 navigator.geolocation.getCurrentPosition(res, rej, {timeout:10000}));
-    const {latitude:lat, longitude:lng} = pos.coords;
+      /* 1. read + compress */
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      await new Promise(r => reader.onloadend = r);
+      const photo = await shrinkAndCompress(reader.result);
 
-    // 3. Build job + enqueue
-    const job = {photo, lat, lng, ts: Date.now()};
-    enqueue(job);
-    await flushQueue();
+      /* 2. geolocation */
+      const pos = await new Promise((ok, err) =>
+        navigator.geolocation.getCurrentPosition(ok, err, {timeout:1e4}));
+      const {latitude:lat, longitude:lng} = pos.coords;
 
-    alert('✅ Saved locally – will sync immediately when online.');
-    fileInput.value = '';       // reset picker
-  } catch (err){
-    alert('❌ '+err.message);
-  }
+      /* 3. queue + flush */
+      enqueue({photo, lat, lng, ts: Date.now()});
+      await flushQueue();
+
+      alert('✅ Saved locally — will sync when online.');
+      fileInput.value = '';
+    } catch (err) {
+      alert('❌ '+err.message);
+    }
+  });
+
+  /* try to send anything left from earlier sessions */
+  flushQueue();
 });
-
-/* Flush anything left from previous offline sessions */
-window.addEventListener('load', flushQueue);
-window.addEventListener('online', flushQueue);
 </script>
 </body>
 </html>
