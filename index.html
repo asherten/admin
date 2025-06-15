@@ -26,20 +26,21 @@
   <button type="button" id="recordBtn">📸 Record Trash</button>
 
 <script>
-/* ------------- CONFIG ------------- */
+/* ---------- CONFIG ---------- */
 const ENDPOINT    = 'https://trash-proxy.stormdraindna.workers.dev/';
 const MAX_RETRIES = 3;
-/* ---------------------------------- */
+/* ---------------------------- */
 
+/* -------- Local queue ------- */
 const qKey = 'queue';
 const loadQ   = () => JSON.parse(localStorage[qKey] || '[]');
 const saveQ   = q  => localStorage[qKey] = JSON.stringify(q);
 const enqueue = j  => { const q = loadQ(); q.push(j); saveQ(q); };
-const dequeue = () => { const q = loadQ(); const j = q.shift(); saveQ(q); return j; };
+const dequeue = () => { const q = loadQ(); const j=q.shift(); saveQ(q); return j; };
 
 let flushing = false;
-async function flushQueue() {
-  if (flushing) return;           // prevent parallel runs
+async function flushQueue () {
+  if (flushing) return;
   flushing = true;
   try {
     while (loadQ().length) {
@@ -50,7 +51,7 @@ async function flushQueue() {
   } finally { flushing = false; }
 }
 
-/* shrink & compress */
+/* ------ shrink & compress ---- */
 function shrinkAndCompress(dataUrl) {
   return new Promise(res => {
     const img = new Image();
@@ -72,28 +73,24 @@ function shrinkAndCompress(dataUrl) {
   });
 }
 
-/* send with retries – success whenever HTTP 200/204 came back,
-   even if body wasn’t valid JSON */
+/* -------- send with retry ------ */
 async function trySend(payload) {
   for (let i = 1; i <= MAX_RETRIES; i++) {
     try {
-      const r  = await fetch(ENDPOINT, {
+      const r = await fetch(ENDPOINT, {
         method: 'POST',
         headers:{'Content-Type':'application/json'},
         body:   JSON.stringify(payload)
       });
-
-      if (r.ok) return true;              // **treat any 2xx as success**
-
-    } catch (_) { /* network error → retry */ }
-
-    if (i < MAX_RETRIES)         // small back-off
+      if (r.ok) return true;          // any 2xx is success
+    } catch (_) {}
+    if (i < MAX_RETRIES)
       await new Promise(s => setTimeout(s, 600 * i));
   }
-  return false;                  // completely offline
+  return false;
 }
 
-/* DOM ready */
+/* ---------- DOM ready --------- */
 document.addEventListener('DOMContentLoaded', () => {
   const fileInput = document.getElementById('fileInput');
   const recordBtn = document.getElementById('recordBtn');
@@ -104,35 +101,33 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const [file] = e.target.files;
       if (!file) return;
-
-      recordBtn.disabled = true;           // avoid double-taps
+      recordBtn.disabled = true;    // block double-tap
 
       const reader = new FileReader();
       reader.readAsDataURL(file);
       await new Promise(r => reader.onloadend = r);
       const photo = await shrinkAndCompress(reader.result);
 
-      const pos   = await new Promise((ok, err) =>
-                     navigator.geolocation.getCurrentPosition(ok, err, {timeout: 1e4}));
+      const pos = await new Promise((ok, err) =>
+        navigator.geolocation.getCurrentPosition(ok, err, {timeout: 1e4}));
       const {latitude:lat, longitude:lng} = pos.coords;
 
-      const job = {photo, lat, lng, ts: Date.now()};
-      enqueue(job);
-
+      enqueue({photo, lat, lng, ts: Date.now()});
       const synced = await flushQueue();
+
       alert(synced === false
-              ? '✅ Saved locally – will sync when connection is back.'
+              ? '✅ Saved locally – will sync when online.'
               : '✅ Uploaded!');
 
-      fileInput.value = '';       // reset picker
+      fileInput.value = '';
     } catch (err) {
-      alert('❌ '+err.message);
+      alert('❌ ' + err.message);
     } finally {
       recordBtn.disabled = false;
     }
   });
 
-  flushQueue();                  // try leftover jobs on load / when online
+  flushQueue();
   window.addEventListener('online', flushQueue);
 });
 </script>
