@@ -26,25 +26,31 @@
   <button type="button" id="recordBtn">📸 Record Trash</button>
 
 <script>
-/* ---------------- CONFIG ---------------- */
+/* ------------- CONFIG ------------- */
 const ENDPOINT    = 'https://trash-proxy.stormdraindna.workers.dev/';
 const MAX_RETRIES = 3;
-/* ---------------------------------------- */
+/* ---------------------------------- */
 
-/* ---------- helper: offline queue -------- */
-const loadQueue  = () => JSON.parse(localStorage.queue || '[]');
-const saveQueue  = q  => localStorage.queue = JSON.stringify(q);
-const enqueue    = j  => { const q = loadQueue(); q.push(j); saveQueue(q); };
-const dequeue    = () => { const q = loadQueue(); const j=q.shift(); saveQueue(q); return j; };
+const qKey = 'queue';
+const loadQ   = () => JSON.parse(localStorage[qKey] || '[]');
+const saveQ   = q  => localStorage[qKey] = JSON.stringify(q);
+const enqueue = j  => { const q = loadQ(); q.push(j); saveQ(q); };
+const dequeue = () => { const q = loadQ(); const j = q.shift(); saveQ(q); return j; };
 
-async function flushQueue () {
-  while (loadQueue().length) {
-    const job = dequeue();
-    if (!(await trySend(job))) { enqueue(job); break; }
-  }
+let flushing = false;
+async function flushQueue() {
+  if (flushing) return;           // prevent parallel runs
+  flushing = true;
+  try {
+    while (loadQ().length) {
+      const job = dequeue();
+      const ok  = await trySend(job);
+      if (!ok) { enqueue(job); break; }
+    }
+  } finally { flushing = false; }
 }
 
-/* ---------- helper: shrink & compress ---- */
+/* shrink & compress */
 function shrinkAndCompress(dataUrl) {
   return new Promise(res => {
     const img = new Image();
@@ -52,41 +58,42 @@ function shrinkAndCompress(dataUrl) {
       let {width, height} = img;
       const MAX = 1024;
       if (width > MAX || height > MAX) {
-        const scale = MAX / Math.max(width, height);
-        width  = Math.round(width  * scale);
-        height = Math.round(height * scale);
+        const s = MAX / Math.max(width, height);
+        width  = Math.round(width  * s);
+        height = Math.round(height * s);
       }
-      const canvas = document.createElement('canvas');
-      canvas.width  = width;
-      canvas.height = height;
-      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-      res(canvas.toDataURL('image/jpeg', 0.7));
+      const c = document.createElement('canvas');
+      c.width = width; c.height = height;
+      c.getContext('2d').drawImage(img, 0, 0, width, height);
+      res(c.toDataURL('image/jpeg', 0.7));
     };
     img.onerror = () => res(dataUrl);
     img.src = dataUrl;
   });
 }
 
-/* ---------- helper: send with retries ---- */
+/* send with retries – success whenever HTTP 200/204 came back,
+   even if body wasn’t valid JSON */
 async function trySend(payload) {
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  for (let i = 1; i <= MAX_RETRIES; i++) {
     try {
       const r  = await fetch(ENDPOINT, {
         method: 'POST',
         headers:{'Content-Type':'application/json'},
         body:   JSON.stringify(payload)
       });
-      const js = await r.json().catch(() => ({}));
-      if (js.status === 'ok') return true;
-      throw new Error(js.error || 'server');
-    } catch (_) {
-      if (attempt === MAX_RETRIES) return false;
-      await new Promise(s => setTimeout(s, 600 * attempt));
-    }
+
+      if (r.ok) return true;              // **treat any 2xx as success**
+
+    } catch (_) { /* network error → retry */ }
+
+    if (i < MAX_RETRIES)         // small back-off
+      await new Promise(s => setTimeout(s, 600 * i));
   }
+  return false;                  // completely offline
 }
 
-/* ---------- DOM-ready bindings ---------- */
+/* DOM ready */
 document.addEventListener('DOMContentLoaded', () => {
   const fileInput = document.getElementById('fileInput');
   const recordBtn = document.getElementById('recordBtn');
@@ -95,33 +102,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
   fileInput.addEventListener('change', async e => {
     try {
-      const file = e.target.files[0];
+      const [file] = e.target.files;
       if (!file) return;
 
-      /* 1. read + compress */
+      recordBtn.disabled = true;           // avoid double-taps
+
       const reader = new FileReader();
       reader.readAsDataURL(file);
       await new Promise(r => reader.onloadend = r);
       const photo = await shrinkAndCompress(reader.result);
 
-      /* 2. geolocation */
-      const pos = await new Promise((ok, err) =>
-        navigator.geolocation.getCurrentPosition(ok, err, {timeout:1e4}));
+      const pos   = await new Promise((ok, err) =>
+                     navigator.geolocation.getCurrentPosition(ok, err, {timeout: 1e4}));
       const {latitude:lat, longitude:lng} = pos.coords;
 
-      /* 3. queue + flush */
-      enqueue({photo, lat, lng, ts: Date.now()});
-      await flushQueue();
+      const job = {photo, lat, lng, ts: Date.now()};
+      enqueue(job);
 
-      alert('✅ Saved locally — will sync when online.');
-      fileInput.value = '';
+      const synced = await flushQueue();
+      alert(synced === false
+              ? '✅ Saved locally – will sync when connection is back.'
+              : '✅ Uploaded!');
+
+      fileInput.value = '';       // reset picker
     } catch (err) {
       alert('❌ '+err.message);
+    } finally {
+      recordBtn.disabled = false;
     }
   });
 
-  /* try to send anything left from earlier sessions */
-  flushQueue();
+  flushQueue();                  // try leftover jobs on load / when online
+  window.addEventListener('online', flushQueue);
 });
 </script>
 </body>
